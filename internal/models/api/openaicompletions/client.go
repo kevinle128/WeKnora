@@ -60,7 +60,7 @@ func (c *Client) send(
 		api.AttachSessionAffinityHeaders(req, api.ClampPromptCacheKey(key))
 	}
 	api.LogRequest(ctx, url, c.cfg.Endpoint.Model, data, stream)
-	resp, err := c.cfg.Endpoint.Do(req)
+	resp, err := c.cfg.Endpoint.DoWithRateLimitRetry(req, api.DefaultRateLimitRetryPolicy)
 	if err != nil {
 		return nil, data, err
 	}

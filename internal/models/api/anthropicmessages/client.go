@@ -86,7 +86,7 @@ func (c *Client) send(
 		req.Header.Set("anthropic-beta", beta)
 	}
 	api.LogRequest(ctx, target, c.cfg.Endpoint.Model, data, stream)
-	resp, err := c.cfg.Endpoint.Do(req)
+	resp, err := c.cfg.Endpoint.DoWithRateLimitRetry(req, api.DefaultRateLimitRetryPolicy)
 	if err != nil {
 		return nil, err
 	}

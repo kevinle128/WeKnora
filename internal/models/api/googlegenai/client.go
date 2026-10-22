@@ -93,7 +93,7 @@ func (c *Client) send(
 		return nil, nil, err
 	}
 	api.LogRequest(ctx, target, c.cfg.Endpoint.Model, data, stream)
-	resp, err := c.cfg.Endpoint.Do(req)
+	resp, err := c.cfg.Endpoint.DoWithRateLimitRetry(req, api.DefaultRateLimitRetryPolicy)
 	if err != nil {
 		return nil, data, err
 	}
