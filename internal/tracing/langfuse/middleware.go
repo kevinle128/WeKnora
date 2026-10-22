@@ -1,7 +1,10 @@
 package langfuse
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"strconv"
 	"strings"
 
@@ -50,6 +53,8 @@ func GinMiddleware() gin.HandlerFunc {
 		if rid, ok := types.RequestIDFromContext(ctx); ok {
 			opts.Metadata["request_id"] = rid
 		}
+
+		opts.Input = extractChatInput(c)
 
 		newCtx, trace := mgr.StartTrace(ctx, opts)
 		c.Request = c.Request.WithContext(newCtx)
@@ -156,4 +161,36 @@ func extractSessionID(c *gin.Context) string {
 		return v
 	}
 	return ""
+}
+
+// extractChatInput peeks at the JSON body of chat/search POST requests and
+// returns the user's query so the trace shows an Input in the Langfuse UI.
+// The body is restored so downstream handlers can still read it.
+func extractChatInput(c *gin.Context) interface{} {
+	if c.Request.Method != "POST" || c.Request.Body == nil {
+		return nil
+	}
+	path := c.FullPath()
+	if !strings.HasPrefix(path, "/api/v1/knowledge-chat") &&
+		!strings.HasPrefix(path, "/api/v1/agent-chat") &&
+		!strings.HasPrefix(path, "/api/v1/knowledge-search") {
+		return nil
+	}
+	const maxPeek = 1 << 20
+	raw, err := io.ReadAll(io.LimitReader(c.Request.Body, maxPeek+1))
+	// Restore: peeked bytes followed by whatever is left unread.
+	c.Request.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(raw), c.Request.Body), c.Request.Body}
+	if err != nil || len(raw) > maxPeek {
+		return nil
+	}
+	var body struct {
+		Query string `json:"query"`
+	}
+	if json.Unmarshal(raw, &body) != nil || body.Query == "" {
+		return nil
+	}
+	return map[string]interface{}{"query": body.Query}
 }
