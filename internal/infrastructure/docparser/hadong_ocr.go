@@ -129,7 +129,9 @@ func hadongPageUnits(markdown string) []sourceloc.Unit {
 		loc := types.SourceLocator{Type: types.SourceLocatorPDF, Page: page}
 		for _, para := range strings.Split(markdown[m[1]:end], "\n\n") {
 			if strings.TrimSpace(para) != "" {
-				units = append(units, sourceloc.Unit{Text: para, Locator: loc})
+				// Tags are not document text: the aligner skips them in the
+				// markdown, so they must not be part of the unit either.
+				units = append(units, sourceloc.Unit{Text: minerUHTMLTagRe.ReplaceAllString(para, " "), Locator: loc})
 			}
 		}
 	}

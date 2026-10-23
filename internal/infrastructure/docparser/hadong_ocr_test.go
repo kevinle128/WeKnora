@@ -29,3 +29,13 @@ func TestHadongPageUnitsWithoutMarkers(t *testing.T) {
 	assert.Empty(t, hadongPageUnits("plain text\n\nno markers"))
 	assert.Nil(t, paddleOCRVLSourceBlocks("x", hadongPageUnits("x"), "docx"))
 }
+
+func TestHadongPageUnitsAlignHTMLTables(t *testing.T) {
+	md := "<!-- Page 3 -->\n\n<table><tr><td colspan=\"3\">TẠM ỨNG CÔNG TÁC PHÍ</td></tr><tr><td>Lập Giấy đề nghị</td></tr></table>\n\n" +
+		"| STT | Tên tài liệu |\n|-----|------|\n| 1 | Biểu mẫu<br>Kế hoạch |\n"
+	blocks := paddleOCRVLSourceBlocks(md, hadongPageUnits(md), "pdf")
+	require.Len(t, blocks, 2)
+	for _, b := range blocks {
+		assert.Equal(t, 3, b.Locator.Page)
+	}
+}
