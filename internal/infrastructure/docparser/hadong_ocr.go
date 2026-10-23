@@ -9,9 +9,12 @@ import (
 	"net/http"
 	"net/textproto"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/sourceloc"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/utils"
 )
@@ -97,7 +100,40 @@ func (r *hadongOCRReader) Read(ctx context.Context, req *types.ReadRequest) (*ty
 	if err != nil {
 		return nil, err
 	}
-	return &types.ReadResult{MarkdownContent: string(result)}, nil
+	markdown := string(result)
+	return &types.ReadResult{
+		MarkdownContent: markdown,
+		SourceBlocks:    paddleOCRVLSourceBlocks(markdown, hadongPageUnits(markdown), req.FileType),
+	}, nil
+}
+
+// hadongPageMarkerRe matches the page marker Hadong writes before each page
+// of its markdown, for example "<!-- Page 3 -->".
+var hadongPageMarkerRe = regexp.MustCompile(`(?i)<!--\s*page\s+(\d+)\s*-->`)
+
+// hadongPageUnits lists the markdown paragraphs with the PDF page they come
+// from, read from the page markers. Hadong returns no layout boxes, so each
+// locator names the page only. Text before the first marker gets no unit.
+func hadongPageUnits(markdown string) []sourceloc.Unit {
+	marks := hadongPageMarkerRe.FindAllStringSubmatchIndex(markdown, -1)
+	var units []sourceloc.Unit
+	for i, m := range marks {
+		page, err := strconv.Atoi(markdown[m[2]:m[3]])
+		if err != nil || page <= 0 {
+			continue
+		}
+		end := len(markdown)
+		if i+1 < len(marks) {
+			end = marks[i+1][0]
+		}
+		loc := types.SourceLocator{Type: types.SourceLocatorPDF, Page: page}
+		for _, para := range strings.Split(markdown[m[1]:end], "\n\n") {
+			if strings.TrimSpace(para) != "" {
+				units = append(units, sourceloc.Unit{Text: para, Locator: loc})
+			}
+		}
+	}
+	return units
 }
 
 func (r *hadongOCRReader) do(ctx context.Context, method, path string, body *bytes.Buffer, contentType string) ([]byte, error) {
