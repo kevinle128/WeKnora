@@ -69,7 +69,12 @@ type AgentStreamHandler struct {
 	finalAnswer     string
 	answerSegments  []*answerSegment     // Per-answer-event-ID accumulation, so superseded preambles can be dropped
 	eventStartTimes map[string]time.Time // Track start time for duration calculation
-	mu              sync.Mutex
+	// failureText is the notice for an error that ended the turn; empty while
+	// the turn has not failed. failureFilled records that it replaced an empty
+	// answer, so a completion that arrives later can swap it for the real one.
+	failureText   string
+	failureFilled bool
+	mu            sync.Mutex
 }
 
 // answerSegment accumulates the streamed content of a single final-answer event
@@ -654,12 +659,50 @@ func (h *AgentStreamHandler) handleReflection(ctx context.Context, evt event.Eve
 	return nil
 }
 
+// recordFailure marks the turn as failed so the persisted assistant message
+// says so. A cancelled context is a user stop, not a failure. The engine emits
+// its completion event before the error, but the opposite order is also
+// possible, so the failure is applied now and again when the completion runs.
+func (h *AgentStreamHandler) recordFailure(errMsg string) {
+	if h.ctx.Err() != nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.failureText == "" {
+		h.failureText = failedTurnText(errMsg)
+	}
+	h.applyFailureLocked()
+}
+
+// applyFailureLocked writes the failed state onto the assistant message. A
+// partial answer already streamed is kept as it is; an empty one gets the
+// failure notice. Callers must hold h.mu.
+func (h *AgentStreamHandler) applyFailureLocked() {
+	if h.failureText == "" || h.assistantMessage == nil {
+		return
+	}
+	h.assistantMessage.RunState = types.MessageRunStateFailed
+	h.assistantMessage.IsCompleted = true
+	if strings.TrimSpace(h.assistantMessage.Content) == "" {
+		h.assistantMessage.Content = h.failureText
+		h.failureFilled = true
+	}
+	// A completion event built before the error carries the old content.
+	if h.completionEvent != nil {
+		if h.completionEvent.Data != nil {
+			h.completionEvent.Data["final_content"] = h.assistantMessage.Content
+		}
+	}
+}
+
 // handleError handles error events
 func (h *AgentStreamHandler) handleError(ctx context.Context, evt event.Event) error {
 	data, ok := evt.Data.(event.ErrorData)
 	if !ok {
 		return nil
 	}
+	h.recordFailure(data.Error)
 
 	// Build error metadata
 	metadata := map[string]interface{}{
@@ -775,7 +818,16 @@ func (h *AgentStreamHandler) handleComplete(ctx context.Context, evt event.Event
 			h.assistantMessage.KnowledgeReferences = knowledgeRefs
 		}
 
+		if h.failureFilled {
+			// The failure notice stood in for an answer that the completion
+			// now supplies; do not store both.
+			h.assistantMessage.Content = ""
+			h.failureFilled = false
+		}
 		h.assistantMessage.Content += data.FinalAnswer
+		// A failure recorded before this completion must survive the state
+		// reset above.
+		h.applyFailureLocked()
 
 		// Update agent steps if provided
 		if data.AgentSteps != nil {

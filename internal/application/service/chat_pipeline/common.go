@@ -143,6 +143,11 @@ func loadAndProcessHistory(
 
 	historyMap := make(map[string]*types.History)
 	for _, message := range history {
+		// A failed turn has no answer to replay. Its question is dropped with
+		// it, because a turn without an answer never enters the list below.
+		if message.Role == "assistant" && message.RunState == types.MessageRunStateFailed {
+			continue
+		}
 		h, ok := historyMap[message.RequestID]
 		if !ok {
 			h = &types.History{}

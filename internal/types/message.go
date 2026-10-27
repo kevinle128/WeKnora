@@ -507,8 +507,10 @@ type Message struct {
 	PendingPrompt *PendingPromptView `json:"pending_prompt,omitempty" gorm:"-"`
 	// Whether message generation is complete
 	IsCompleted bool `json:"is_completed"`
-	// RunState refines an incomplete message: MessageRunStateAwaitingInput
-	// means the run ended suspended on a prompt instead of still generating.
+	// RunState refines the message state: MessageRunStateAwaitingInput means
+	// the run ended suspended on a prompt instead of still generating, and
+	// MessageRunStateFailed means the turn ended on an error (the message is
+	// completed; its content is the partial answer or a generic notice).
 	// Empty means IsCompleted alone describes the message.
 	RunState string `json:"run_state,omitempty" gorm:"type:varchar(32);not null;default:''"`
 	// Whether this response is a fallback (no knowledge base match found)
@@ -673,6 +675,10 @@ func (m *Message) BeforeCreate(tx *gorm.DB) (err error) {
 // MessageRunStateAwaitingInput marks an assistant message whose run ended
 // suspended on an agent prompt and will resume once the user answers.
 const MessageRunStateAwaitingInput = "awaiting_input"
+
+// MessageRunStateFailed marks an assistant message whose turn ended on an
+// error. A user stop is not a failure and keeps the run state empty.
+const MessageRunStateFailed = "failed"
 
 // MessageSearchMode represents the search mode for message search
 type MessageSearchMode string

@@ -353,3 +353,30 @@ func TestMessageCheckpointSinkWritesThroughTheSession(t *testing.T) {
 		&types.ContextCheckpoint{Summary: "sum"}))
 	assert.Equal(t, []string{"s1/a2/sum"}, repo.updates)
 }
+
+// A turn that ended on an error has no answer to replay; it is dropped with
+// the question it belongs to while neighbouring turns stay.
+func TestCompleteHistoryTurnsDropsFailedTurns(t *testing.T) {
+	at := time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC)
+	rows := []*types.Message{
+		{ID: "u1", RequestID: "r1", Role: "user", CreatedAt: at},
+		{ID: "a1", RequestID: "r1", Role: "assistant", IsCompleted: true, CreatedAt: at.Add(time.Second)},
+		{ID: "u2", RequestID: "r2", Role: "user", CreatedAt: at.Add(time.Minute)},
+		{
+			ID: "a2", RequestID: "r2", Role: "assistant", IsCompleted: true,
+			RunState: types.MessageRunStateFailed, CreatedAt: at.Add(time.Minute + time.Second),
+		},
+		{ID: "u3", RequestID: "r3", Role: "user", CreatedAt: at.Add(2 * time.Minute)},
+		{ID: "a3", RequestID: "r3", Role: "assistant", IsCompleted: true, CreatedAt: at.Add(2*time.Minute + time.Second)},
+	}
+	replay := newHistoryReplay(nil, 1<<30, false)
+	var slim []*types.Message
+	for _, row := range rows {
+		slim = append(slim, replay.track(row))
+	}
+
+	turns := completeHistoryTurns(slim, true)
+	require.Len(t, turns, 2)
+	assert.Equal(t, "a1", turns[0].assistant.ID)
+	assert.Equal(t, "a3", turns[1].assistant.ID)
+}

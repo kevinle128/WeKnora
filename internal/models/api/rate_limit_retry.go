@@ -47,20 +47,44 @@ func IsRateLimitError(err error) bool {
 	if !errors.As(err, &httpErr) {
 		return false
 	}
-	switch httpErr.StatusCode {
+	return isRateLimitReply(httpErr.StatusCode, httpErr.RetryAfter() > 0, httpErr.Body)
+}
+
+func isRateLimitReply(status int, hasRetryAfter bool, body string) bool {
+	switch status {
 	case http.StatusTooManyRequests:
 		return true
 	case http.StatusServiceUnavailable:
-		if httpErr.RetryAfter() > 0 {
+		if hasRetryAfter {
 			return true
 		}
-		body := strings.ToLower(httpErr.Body)
+		body = strings.ToLower(body)
 		return strings.Contains(body, "rate limit") ||
 			strings.Contains(body, "rate_limit") ||
 			strings.Contains(body, "too many requests") ||
 			strings.Contains(body, "[429]")
 	}
 	return false
+}
+
+// httpErrorTextPattern matches the text HTTPError.Error produces. An error
+// that crossed an event or stream boundary is only this text, so its status
+// and body must be read back from it.
+var httpErrorTextPattern = regexp.MustCompile(`status (\d{3}): ?([\s\S]*)`)
+
+// IsRateLimitErrorText applies the IsRateLimitError rules to the text of an
+// HTTPError that was flattened to a string. The Retry-After header is not part
+// of that text, so a 503 qualifies only through its body.
+func IsRateLimitErrorText(msg string) bool {
+	m := httpErrorTextPattern.FindStringSubmatch(msg)
+	if m == nil {
+		return false
+	}
+	status, err := strconv.Atoi(m[1])
+	if err != nil {
+		return false
+	}
+	return isRateLimitReply(status, false, m[2])
 }
 
 // rateLimitWait is how long to wait before retry number attempt (1-based).

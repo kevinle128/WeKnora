@@ -110,3 +110,25 @@ func TestDoWithRateLimitRetryStopsOnOtherErrorsAndBudget(t *testing.T) {
 	assert.True(t, IsRateLimitError(err))
 	assert.Equal(t, 3, attempts, "first attempt plus two retries")
 }
+
+func TestIsRateLimitErrorText(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"429", &HTTPError{StatusCode: 429, Body: "slow down"}, true},
+		{"503 with rate limit body", &HTTPError{StatusCode: 503, Body: proxiedRateLimitBody}, true},
+		{"plain 503", &HTTPError{StatusCode: 503, Body: "no healthy upstream"}, false},
+		{"500", &HTTPError{StatusCode: 500, Body: "rate limit"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, IsRateLimitErrorText(tc.err.Error()))
+			assert.Equal(t, IsRateLimitError(tc.err), IsRateLimitErrorText(tc.err.Error()),
+				"the text form must agree with the typed form when no Retry-After is set")
+		})
+	}
+	assert.False(t, IsRateLimitErrorText("connection reset by peer"))
+	assert.False(t, IsRateLimitErrorText(""))
+}

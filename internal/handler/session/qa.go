@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
@@ -1368,7 +1369,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	// Normal mode: register completion handler on EventAgentFinalAnswer
 	// (Agent mode handles completion in the defer block instead)
 	if mode == qaModeNormal {
-		var completionHandled bool
+		var completionHandled atomic.Bool
 
 		// Persist the pipeline's retrieval/attachment stages so a reloaded
 		// conversation redraws the timeline it showed while streaming, including
@@ -1401,10 +1402,9 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 				markQuickAnswerTruncated(streamCtx.assistantMessage)
 			}
 			if data.Done {
-				if completionHandled {
+				if !completionHandled.CompareAndSwap(false, true) {
 					return nil
 				}
-				completionHandled = true
 
 				logger.Infof(streamCtx.asyncCtx, "Knowledge QA service completed for session: %s", sessionID)
 				updateCtx := context.WithValue(streamCtx.asyncCtx, types.TenantIDContextKey, reqCtx.session.TenantID)
@@ -1412,6 +1412,10 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 			}
 			return nil
 		})
+
+		h.registerQuickAnswerErrorCompletion(
+			streamCtx, reqCtx.session.TenantID, reqCtx.query, reqCtx.userMessageID, &completionHandled,
+		)
 	}
 
 	// Execute QA asynchronously
@@ -1992,6 +1996,26 @@ func appendQuickAnswerReasoning(msg *types.Message, content string) {
 	ensureQuickAnswerStep(msg).ReasoningContent += content
 }
 
+// registerQuickAnswerErrorCompletion closes a quick-answer turn that ended on
+// an error. Such a turn gets no Done answer, so nothing else would ever close
+// the row. The stream handler subscribed earlier and has already recorded the
+// failure by the time this runs. A cancelled context is a user stop, which the
+// stop path persists itself. completionHandled is shared with the Done-answer
+// handler so the turn is completed once.
+func (h *Handler) registerQuickAnswerErrorCompletion(
+	streamCtx *sseStreamContext, sessionTenantID uint64, query, userMessageID string,
+	completionHandled *atomic.Bool,
+) {
+	streamCtx.eventBus.On(event.EventError, func(_ context.Context, _ event.Event) error {
+		if streamCtx.asyncCtx.Err() != nil || !completionHandled.CompareAndSwap(false, true) {
+			return nil
+		}
+		updateCtx := context.WithValue(streamCtx.asyncCtx, types.TenantIDContextKey, sessionTenantID)
+		h.completeQuickAnswerTurn(updateCtx, streamCtx, query, userMessageID)
+		return nil
+	})
+}
+
 // completeQuickAnswerTurn finishes a KnowledgeQA (fast-answer) turn.
 // EventAgentComplete must run before the GORM write: handleComplete attaches
 // SandboxCheckpoint (and artifacts) to the in-memory message, and
@@ -2092,6 +2116,11 @@ func (h *Handler) completeAssistantMessage(
 	if err := h.messageService.UpdateMessage(ctx, assistantMessage); err != nil {
 		logger.Errorf(ctx, "Failed to persist assistant message %s: %v", assistantMessage.ID, err)
 		return err
+	}
+	// A failed turn has no answer worth searching, suggesting from or
+	// remembering.
+	if assistantMessage.RunState == types.MessageRunStateFailed {
+		return nil
 	}
 
 	// Asynchronously index the Q&A pair into the chat history knowledge base for vector search.
