@@ -124,6 +124,45 @@ func TestAnydocReaderDisconnectedFallbackKeepsError(t *testing.T) {
 	}
 }
 
+func TestAnydocReaderFallsBackWhenConversionFails(t *testing.T) {
+	fallback := &stubDocReader{result: &types.ReadResult{MarkdownContent: "BAN CAM KET"}}
+	req := &types.ReadRequest{FileName: "cam-ket.doc", FileType: "doc"}
+	result, err := NewAnydocReader(nil, fallback).readUnconvertible(context.Background(), req,
+		errors.New("malformed document: Malformed MiniFAT"))
+	if err != nil {
+		t.Fatalf("readUnconvertible: %v", err)
+	}
+	if result.MarkdownContent != "BAN CAM KET" {
+		t.Errorf("markdown = %q, want fallback text", result.MarkdownContent)
+	}
+	if result.Metadata["anydoc_fallback"] != "conversion_failed" {
+		t.Errorf("anydoc_fallback = %q, want conversion_failed", result.Metadata["anydoc_fallback"])
+	}
+	if fallback.got == nil || fallback.got.ParserEngine != BuiltinEngineName {
+		t.Errorf("fallback request engine = %v, want builtin", fallback.got)
+	}
+	if req.ParserEngine == BuiltinEngineName {
+		t.Error("caller request was mutated")
+	}
+}
+
+func TestAnydocReaderConversionFailureWithoutFallbackKeepsError(t *testing.T) {
+	_, err := NewAnydocReader(nil, nil).readUnconvertible(context.Background(),
+		&types.ReadRequest{FileName: "cam-ket.doc"}, errors.New("Malformed MiniFAT"))
+	if err == nil || !strings.Contains(err.Error(), "Malformed MiniFAT") {
+		t.Fatalf("want the anydoc error, got %v", err)
+	}
+}
+
+func TestAnydocReaderConversionFailureReportsBothErrors(t *testing.T) {
+	fallback := &stubDocReader{err: errors.New("antiword failed")}
+	_, err := NewAnydocReader(nil, fallback).readUnconvertible(context.Background(),
+		&types.ReadRequest{FileName: "cam-ket.doc"}, errors.New("Malformed MiniFAT"))
+	if err == nil || !strings.Contains(err.Error(), "Malformed MiniFAT") || !strings.Contains(err.Error(), "antiword failed") {
+		t.Fatalf("want both errors, got %v", err)
+	}
+}
+
 type stubDocReader struct {
 	got    *types.ReadRequest
 	result *types.ReadResult

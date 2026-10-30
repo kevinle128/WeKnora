@@ -56,7 +56,7 @@ func (r *AnydocReader) Read(ctx context.Context, req *types.ReadRequest) (*types
 		return r.readScannedPDF(ctx, req, err)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("anydoc conversion failed for %q: %w", req.FileName, err)
+		return r.readUnconvertible(ctx, req, err)
 	}
 	if converted.AssetsError != nil {
 		logger.Warnf(ctx, "[anydoc] %q parsed as text but its images were dropped: %v",
@@ -91,14 +91,46 @@ func (r *AnydocReader) readScannedPDF(ctx context.Context, req *types.ReadReques
 
 	logger.Infof(ctx, "[anydoc] %q contains pages requiring OCR, falling back to builtin for scanned-PDF OCR",
 		req.FileName)
+	result, err := r.delegateToBuiltin(ctx, req, "scanned_pdf")
+	if err != nil {
+		return nil, fmt.Errorf("anydoc scanned-PDF fallback failed for %q: %w", req.FileName, err)
+	}
+	if result.Metadata["image_source_type"] == "" {
+		result.Metadata["image_source_type"] = "scanned_pdf"
+	}
+	return result, nil
+}
+
+// readUnconvertible handles a document that anydoc rejected. Its OLE2 and
+// OOXML readers are strict, so a file that Word still opens (for example a
+// .doc whose MiniFAT reuses a sector) fails here. The builtin docreader
+// extracts such files with antiword or LibreOffice, so it gets a second try.
+// Without a connected fallback the original anydoc error is returned.
+func (r *AnydocReader) readUnconvertible(ctx context.Context, req *types.ReadRequest, convertErr error) (*types.ReadResult, error) {
+	convertErr = fmt.Errorf("anydoc conversion failed for %q: %w", req.FileName, convertErr)
+	if !r.canFallback() {
+		return nil, convertErr
+	}
+
+	logger.Warnf(ctx, "[anydoc] %q could not be converted, falling back to builtin: %v", req.FileName, convertErr)
+	result, err := r.delegateToBuiltin(ctx, req, "conversion_failed")
+	if err != nil {
+		return nil, fmt.Errorf("%w; builtin fallback also failed: %v", convertErr, err)
+	}
+	return result, nil
+}
+
+// delegateToBuiltin reads the request with the fallback reader and tags the
+// result with the reason it was not handled by anydoc.
+func (r *AnydocReader) delegateToBuiltin(ctx context.Context, req *types.ReadRequest, reason string) (*types.ReadResult, error) {
 	fallbackReq := *req
 	fallbackReq.ParserEngine = BuiltinEngineName
 	result, err := r.fallback.Read(ctx, &fallbackReq)
 	if err != nil {
-		return nil, fmt.Errorf("anydoc scanned-PDF fallback failed for %q: %w", req.FileName, err)
+		return nil, err
 	}
 	if result == nil {
-		return nil, fmt.Errorf("anydoc scanned-PDF fallback returned no result for %q", req.FileName)
+		return nil, fmt.Errorf("fallback returned no result")
 	}
 	if result.Metadata == nil {
 		result.Metadata = map[string]string{}
@@ -106,10 +138,7 @@ func (r *AnydocReader) readScannedPDF(ctx context.Context, req *types.ReadReques
 	if result.Metadata["parser"] == "" {
 		result.Metadata["parser"] = BuiltinEngineName
 	}
-	result.Metadata["anydoc_fallback"] = "scanned_pdf"
-	if result.Metadata["image_source_type"] == "" {
-		result.Metadata["image_source_type"] = "scanned_pdf"
-	}
+	result.Metadata["anydoc_fallback"] = reason
 	return result, nil
 }
 
