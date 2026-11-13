@@ -1,0 +1,11 @@
+# Komodo override for the VTC dev server. Komodo runs docker-compose.yml with this
+# file. The app, frontend and docreader images are built on the server; their
+# names match the upstream images on Docker Hub, so `compose pull` must not
+# replace them. Build one service with DeployStack {"services":["app"]}.
+services:
+  app:
+    pull_policy: never
+  frontend:
+    pull_policy: never
+  docreader:
+    pull_policy: never

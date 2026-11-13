@@ -342,6 +342,9 @@ services:
       - WEKNORA_PADDLEOCR_VL_CLOUD_TIMEOUT=${WEKNORA_PADDLEOCR_VL_CLOUD_TIMEOUT:-}
       # WeKnoraCloud 托管 docreader 轮询任务结果的最长时间（Go duration，默认 20m，应小于 DocReader RPC 超时）
       - WEKNORA_WEKNORACLOUD_TIMEOUT=${WEKNORA_WEKNORACLOUD_TIMEOUT:-}
+      # Hadong OCR parser engine
+      - HADONG_OCR_TOKEN=${HADONG_OCR_TOKEN:-}
+      - HADONG_OCR_BASE_URL=${HADONG_OCR_BASE_URL:-}
       # 知识库巡检回收（回收卡在 processing 的脏数据；false 禁用，不建议）
       - WEKNORA_HOUSEKEEPING_ENABLED=${WEKNORA_HOUSEKEEPING_ENABLED:-}
       - WEKNORA_CHAT_ATTACHMENT_TTL_HOURS=${WEKNORA_CHAT_ATTACHMENT_TTL_HOURS:-24}
